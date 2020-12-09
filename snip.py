@@ -1,5 +1,5 @@
 # Import everything needed to edit video clips
-from moviepy.editor import *
+import cv2
 from PIL import Image, ImageDraw, ImageFont
 import numpy as np
 import os
@@ -33,10 +33,21 @@ def ssd(template, target):
     den = np.sqrt(template_weight + image_weight)
     return num/den
 
+class VideoFileClip:
+    def __init__(self, path):
+        self.cap = cv2.VideoCapture(path)
+        self.end = int(self.cap.get(cv2.CAP_PROP_FRAME_COUNT)/self.cap.get(cv2.CAP_PROP_FPS))
+
+    def get_frame(self, t):
+        self.cap.set(cv2.CAP_PROP_POS_MSEC, t*1000)
+        ret, frame = self.cap.read()
+        return frame
+
 def grey_frame(clip, t):
-    im = np.average(np.array(clip.get_frame(t)), axis=2)
-    total_weight = np.sum(im**2)
-    return im, total_weight
+    frame = clip.get_frame(t)
+    grey = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    total_weight = np.sum(grey**2)
+    return grey, total_weight
 
 @clock(msg="searching")
 def search_clip(clip, template, interval, back_interval=False, fixed_length=False):
