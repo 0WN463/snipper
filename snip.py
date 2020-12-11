@@ -53,14 +53,14 @@ def grey_frame(clip, t):
 def search_clip(clip, template, interval, back_interval=False, fixed_length=False):
     start = time.time()
     (start_template, start_threshold), (end_template, end_threshold), length = template
-
+    granularity = 0.5
 
     if back_interval:
         interval = int(clip.end + interval[0]), int(clip.end + interval[1]) - 1
-        it = np.arange(interval[1]-length+1, interval[0], -1)
+        it = np.arange(interval[1]-length+1, interval[0], -granularity)
 
     else:
-        it = np.arange(interval[0], interval[1])
+        it = np.arange(interval[0], interval[1], granularity)
 
     best = (float("infinity"), None)
     for t in it:
@@ -266,24 +266,50 @@ for file in target_clips:
     path = os.path.join(input_path, file)
     target_clip = VideoFileClip(path)
     print("Working on", path)
+    indices = []
     try:
-        target_op_indices = search_clip(target_clip, op_template, op_interval, fixed_length=True)
-        target_ed_indices = search_clip(target_clip, ed_template, ed_interval, back_interval=True, fixed_length=True)
+        indices.append(search_clip(target_clip, op_template, op_interval, fixed_length=True))
     except AssertionError as e:
-        print("Unable to process", file, e)
-        continue
-    print("op id", target_op_indices)
-    print("ed id", target_ed_indices)
+        pass
+    try:
+        indices.append(search_clip(target_clip, ed_template, ed_interval, back_interval=True, fixed_length=True))
+    except AssertionError as e:
+        pass
 
-    os.chdir("tmp")
-    cmds = [f'ffmpeg -i {os.path.join("..", path)} -to {target_op_indices[0]} -y  -c copy -map 0  prologue.mp4',
-            f'ffmpeg -i {os.path.join("..", path)} -ss {target_op_indices[1]} -to {int(target_ed_indices[0])} -y  -c copy -map 0  middle.mp4',
-            f'ffmpeg -i {os.path.join("..", path)} -ss {target_ed_indices[1]} -y -c copy -map 0  epilogue.mp4',
-            f'ffmpeg -i prologue.mp4 -c copy -bsf:v h264_mp4toannexb -f mpegts -y intermediate1.ts',
-            f'ffmpeg -i middle.mp4 -c copy -bsf:v h264_mp4toannexb -f mpegts -y intermediate2.ts',
-            f'ffmpeg -i epilogue.mp4 -c copy -bsf:v h264_mp4toannexb -f mpegts -y intermediate3.ts',
-            f'ffmpeg -y -i "concat:intermediate1.ts|intermediate2.ts|intermediate3.ts" -c copy -bsf:a aac_adtstoasc {os.path.join("..", output_folder, file)}']
+    if len(indices) == 0:
+        continue
+    prev = 0
+
+
+    cmds = []
+
+    for i, (start, end) in enumerate(indices):
+        cmds.append(f'ffmpeg -i {os.path.join("..", path)} -ss {prev} -to {start} -y  -c copy -map 0  part{i}.mp4')
+        prev = end
+
     
+    cmds.append(f'ffmpeg -i {os.path.join("..", path)} -ss {end} -y -c copy -map 0  part{i+1}.mp4')
+
+    num_parts = len(cmds)
+    for i in range(num_parts):
+        cmds.append(f'ffmpeg -i part{i}.mp4 -c copy -bsf:v h264_mp4toannexb -f mpegts -y intermediate{i}.ts')
+
+
+    pipes = '|'.join([f'intermediate{i}.ts' for i in range(num_parts)])
+
+    cmds.append(f'ffmpeg -y -i "concat:{pipes}" -c copy -bsf:a aac_adtstoasc {os.path.join("..", output_folder, file)}')
+    
+    print(indices)
+    print(cmds)
+    os.chdir("tmp")
+##    cmds = [f'ffmpeg -i {os.path.join("..", path)} -to {target_op_indices[0]} -y  -c copy -map 0  prologue.mp4',
+##            f'ffmpeg -i {os.path.join("..", path)} -ss {target_op_indices[1]} -to {int(target_ed_indices[0])} -y  -c copy -map 0  middle.mp4',
+##            f'ffmpeg -i {os.path.join("..", path)} -ss {target_ed_indices[1]} -y -c copy -map 0  epilogue.mp4',
+##            f'ffmpeg -i prologue.mp4 -c copy -bsf:v h264_mp4toannexb -f mpegts -y intermediate1.ts',
+##            f'ffmpeg -i middle.mp4 -c copy -bsf:v h264_mp4toannexb -f mpegts -y intermediate2.ts',
+##            f'ffmpeg -i epilogue.mp4 -c copy -bsf:v h264_mp4toannexb -f mpegts -y intermediate3.ts',
+##            f'ffmpeg -y -i "concat:intermediate1.ts|intermediate2.ts|intermediate3.ts" -c copy -bsf:a aac_adtstoasc {os.path.join("..", output_folder, file)}']
+##    
     multi_call(cmds)
     os.chdir('..')
 
