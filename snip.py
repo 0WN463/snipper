@@ -8,12 +8,16 @@ import mimetypes
 import argparse
 import time
 import re
-## Timestamps:
-## EP1: 34 - 122.5, 21:46 - 23:14
-## Ep7: 65
 
-OP_SEARCH_LEN = 300
-ED_SEARCH_LEN = 300
+h_bins = 50
+s_bins = 60
+histSize = [h_bins, s_bins]
+h_ranges = [0, 180]
+s_ranges = [0, 256]
+ranges = h_ranges + s_ranges # concat lists
+channels = [0, 1]
+
+compare_method = cv2.HISTCMP_BHATTACHARYYA
 
 def clock(*d_args, **d_kwargs):
     def wrap(func):
@@ -37,10 +41,13 @@ class VideoFileClip:
     def __init__(self, path):
         self.cap = cv2.VideoCapture(path)
         self.end = int(self.cap.get(cv2.CAP_PROP_FRAME_COUNT)/self.cap.get(cv2.CAP_PROP_FPS))
-
+        self.path = path
     def get_frame(self, t):
-        self.cap.set(cv2.CAP_PROP_POS_MSEC, t*1000)
+        self.cap.set(cv2.CAP_PROP_POS_MSEC, round(t*1000))
         ret, frame = self.cap.read()
+
+        if not ret:
+            print(ret, t)
         return frame
 
 def grey_frame(clip, t):
@@ -52,7 +59,7 @@ def grey_frame(clip, t):
 @clock(msg="searching")
 def search_clip(clip, template, interval, back_interval=False, fixed_length=False):
     start = time.time()
-    (start_template, start_threshold), (end_template, end_threshold), length = template
+    (start_hist, start_threshold), (end_hist, end_threshold), length = template
     granularity = 0.5
 
     if back_interval:
@@ -61,11 +68,13 @@ def search_clip(clip, template, interval, back_interval=False, fixed_length=Fals
 
     else:
         it = np.arange(interval[0], interval[1], granularity)
-
     best = (float("infinity"), None)
     for t in it:
-        target = grey_frame(clip, t)
-        diff = ssd(start_template, target)
+        target = cv2.cvtColor(clip.get_frame(t), cv2.COLOR_BGR2HSV)
+        target_hist = cv2.calcHist([target], channels, None, histSize, ranges, accumulate=False)
+        cv2.normalize(target_hist, target_hist, alpha=0, beta=1, norm_type=cv2.NORM_MINMAX)
+        diff = cv2.compareHist(start_hist, target_hist, compare_method)
+
         if diff < best[0]:
             best = (diff, t)
             
@@ -80,19 +89,34 @@ def search_clip(clip, template, interval, back_interval=False, fixed_length=Fals
         return (start_index, start_index + length)
 
     for t in np.arange(start_index, interval[1]):
-        target = grey_frame(clip, t)
-        diff = ssd(end_template, target)
+        target = cv2.cvtColor(clip.get_frame(t), cv2.COLOR_BGR2HSV)
+        target_hist = cv2.calcHist([target], channels, None, histSize, ranges, accumulate=False)
+        cv2.normalize(target_hist, target_hist, alpha=0, beta=1, norm_type=cv2.NORM_MINMAX)
+        diff = cv2.compareHist(end_hist, target_hist, compare_method)
 
         if diff <= end_threshold:
             return (start_index, t)
 
     assert False, "Unable to find end"
+def make_hist(template_clip, indices):
+    start, end = indices    
+
+    start_template = cv2.cvtColor(template_clip.get_frame(start), cv2.COLOR_BGR2HSV)
+    end_template = cv2.cvtColor(template_clip.get_frame(end), cv2.COLOR_BGR2HSV)
+
+    start_hist = cv2.calcHist([start_template], channels, None, histSize, ranges, accumulate=False)
+    end_hist = cv2.calcHist([end_template], channels, None, histSize, ranges, accumulate=False)
+
+    cv2.normalize(start_hist, start_hist, alpha=0, beta=1, norm_type=cv2.NORM_MINMAX)
+    cv2.normalize(end_hist, end_hist, alpha=0, beta=1, norm_type=cv2.NORM_MINMAX)
+
+    return start_hist, end_hist
 
 @clock(msg="templating")
 def get_template(template_clip, indices, interval, back_interval=False):
     start, end = indices    
-    start_template = grey_frame(template_clip, start)
-    end_template = grey_frame(template_clip, end)
+    start_hist, end_hist = make_hist(template_clip, indices)
+    
     best_start, second_best_start = float("infinity"), float("infinity")
     best_end, second_best_end = float("infinity"), float("infinity")
 
@@ -102,8 +126,11 @@ def get_template(template_clip, indices, interval, back_interval=False):
     for t in np.arange(interval[0], interval[1]):
         if t % 50 == 0:
             print(t)
-        target = grey_frame(template_clip, t)
-        diff = ssd(start_template, target)
+            
+        target = cv2.cvtColor(template_clip.get_frame(t), cv2.COLOR_BGR2HSV)
+        target_hist = cv2.calcHist([target], channels, None, histSize, ranges, accumulate=False)
+        cv2.normalize(target_hist, target_hist, alpha=0, beta=1, norm_type=cv2.NORM_MINMAX)
+        diff = cv2.compareHist(start_hist, target_hist, compare_method)
 
         if diff <= best_start:
             second_best_start = best_start
@@ -111,7 +138,7 @@ def get_template(template_clip, indices, interval, back_interval=False):
         else:
             second_best_start = min(second_best_start, diff)
 
-        diff = ssd(end_template, target)
+        diff = cv2.compareHist(end_hist, target_hist, compare_method)
 
         if diff <= best_end:
             second_best_end = best_end
@@ -119,10 +146,10 @@ def get_template(template_clip, indices, interval, back_interval=False):
         else:
             second_best_end = min(second_best_end, diff)
 
-    start_threshold = best_start + 0.5 * (second_best_start - best_start)
-    end_threshold = best_end + 0.5 * (second_best_end - best_end)
+    start_threshold = best_start + 0.8 * (second_best_start - best_start)
+    end_threshold = best_end + 0.8 * (second_best_end - best_end)
     print(best_start, second_best_start)
-    return (start_template, start_threshold), (end_template, end_threshold), end-start
+    return (start_hist, start_threshold), (end_hist, end_threshold), end-start
 
 class Template:
     def __init__(self, file_name, start, end, start_interval, end_interval):
@@ -230,10 +257,8 @@ op_interval = templates[0].interval
 ed_indices = templates[1].indices
 ed_interval = templates[1].interval
 
-
 op_template = get_template(template_clip, op_indices, op_interval)
 ed_template = get_template(template_clip, ed_indices, ed_interval, back_interval=True)
-
 
 try:
     os.mkdir('tmp')
@@ -284,11 +309,16 @@ for file in target_clips:
     cmds = []
 
     for i, (start, end) in enumerate(indices):
-        cmds.append(f'ffmpeg -i {os.path.join("..", path)} -ss {prev} -to {start} -y  -c copy -map 0  part{i}.mp4')
+        if start == prev:
+            start += 0.1
+
+        if prev == 0:
+            cmds.append(f'ffmpeg -i {os.path.join("..", path)} -to {start} -y  -c copy -map 0  part{i}.mp4')
+        else:
+            cmds.append(f'ffmpeg -i {os.path.join("..", path)} -ss {prev} -to {start} -y  -c copy -map 0  part{i}.mp4')
         prev = end
 
-    
-    cmds.append(f'ffmpeg -i {os.path.join("..", path)} -ss {end} -y -c copy -map 0  part{i+1}.mp4')
+    cmds.append(f'ffmpeg -i {os.path.join("..", path)} -ss {prev} -y  -c copy -map 0  part{i+1}.mp4')
 
     num_parts = len(cmds)
     for i in range(num_parts):
@@ -302,14 +332,7 @@ for file in target_clips:
     print(indices)
     print(cmds)
     os.chdir("tmp")
-##    cmds = [f'ffmpeg -i {os.path.join("..", path)} -to {target_op_indices[0]} -y  -c copy -map 0  prologue.mp4',
-##            f'ffmpeg -i {os.path.join("..", path)} -ss {target_op_indices[1]} -to {int(target_ed_indices[0])} -y  -c copy -map 0  middle.mp4',
-##            f'ffmpeg -i {os.path.join("..", path)} -ss {target_ed_indices[1]} -y -c copy -map 0  epilogue.mp4',
-##            f'ffmpeg -i prologue.mp4 -c copy -bsf:v h264_mp4toannexb -f mpegts -y intermediate1.ts',
-##            f'ffmpeg -i middle.mp4 -c copy -bsf:v h264_mp4toannexb -f mpegts -y intermediate2.ts',
-##            f'ffmpeg -i epilogue.mp4 -c copy -bsf:v h264_mp4toannexb -f mpegts -y intermediate3.ts',
-##            f'ffmpeg -y -i "concat:intermediate1.ts|intermediate2.ts|intermediate3.ts" -c copy -bsf:a aac_adtstoasc {os.path.join("..", output_folder, file)}']
-##    
+
     multi_call(cmds)
     os.chdir('..')
 
