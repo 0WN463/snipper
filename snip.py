@@ -64,8 +64,8 @@ def search_clip(clip, template, interval, back_interval=False, fixed_length=Fals
 
     if back_interval:
         interval = int(clip.end + interval[0]), int(clip.end + interval[1]) - 1
-        it = np.arange(interval[1]-length+1, interval[0], -granularity)
-
+#        it = np.arange(interval[1]-length+1, interval[0], -granularity)
+        it = np.arange(interval[0], interval[1], granularity)
     else:
         it = np.arange(interval[0], interval[1], granularity)
     best = (float("infinity"), None)
@@ -120,13 +120,9 @@ def get_template(template_clip, indices, interval, back_interval=False):
     best_start, second_best_start = float("infinity"), float("infinity")
     best_end, second_best_end = float("infinity"), float("infinity")
 
-
     if back_interval:
         interval = template_clip.end + interval[0], template_clip.end + interval[1]
     for t in np.arange(interval[0], interval[1]):
-        if t % 50 == 0:
-            print(t)
-            
         target = cv2.cvtColor(template_clip.get_frame(t), cv2.COLOR_BGR2HSV)
         target_hist = cv2.calcHist([target], channels, None, histSize, ranges, accumulate=False)
         cv2.normalize(target_hist, target_hist, alpha=0, beta=1, norm_type=cv2.NORM_MINMAX)
@@ -153,8 +149,11 @@ def get_template(template_clip, indices, interval, back_interval=False):
 
 class Template:
     def __init__(self, file_name, start, end, start_interval, end_interval):
-        start = float(start)
-        end = float(end)
+        to_time = lambda time_str: float(time_str) if ":" not in time_str else float(int(time_str.split(":")[0]) * 60 + int(time_str.split(":")[1]))
+        
+        start = to_time(start)
+        end = to_time(end)
+        print(start, end)
         start_interval = float(start_interval)
         end_interval = float(end_interval)
 
@@ -209,7 +208,7 @@ templates = []
 try:
     with open(args.templates, "r") as f:
         for line in f:
-            if not re.match(r"^.+,[\d\.]+,[\d\.]+,-?[\d\.]+,-?[\d\.]+$", line):
+            if not re.match(r"^.+,([\d\.]+|\d+:\d+),([\d\.]+|\d+:\d+),-?[\d\.]+,-?[\d\.]+$", line):
                 print(line, "is malformed")
                 quit()
             else:
