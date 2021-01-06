@@ -4,45 +4,31 @@ A Python program that trims off undesired of clips that matches in visual simila
 
 ## Getting Started
 
-These instructions will get you a copy of the project up and running on your local machine for development and testing purposes. See deployment for notes on how to deploy the project on a live system.
+These instructions will get you a copy of the project up and running on your local machine.
 
 ### Prerequisites
 
-What things you need to install the software and how to install them
+- Python 3
 
-```
-Give examples
-```
+### Dependencies
+
+- numpy 
+- openCV
+- Pillow
 
 ### Installing
 
-A step by step series of examples that tell you how to get a development env running
-
-Say what the step will be
+Run the following from the command line
 
 ```
-Give the example
+pip install -r requirements.txt
 ```
-
-And repeat
-
-```
-until finished
-```
-
-End with an example of getting some data out of the system or using it for a little demo
 
 ## Quick Start
 
 Example: `python snip.py -i input_folder -o output_folder template_file.csv` 
 
-If no input folder is specified, it will default to using `input` as the the folder.
-
-If no output folder is specified, it will default to using `output` as the the folder.
-
-If you do not wish to trim the clip from the template file, add the `-s` or `--skip-templates` option.
-
-Where the content of the template_file.csv is in the form of
+The content of the template_file.csv is in the form of
 
 ```
 FILE_NAME, START_TIMESTAMP, END_TIMESTAMP, START_RANGE, END_RANGE
@@ -56,7 +42,7 @@ START_RANGE/END_RANGE is the region where the program should search.
 
 Timestamps can be specified in seconds or MM:SS.
 
-Note that negative indexing is allowed for the time stamps
+Note that negative values is allowed for the time stamps, to indicate duration from the end of the clip.
 
 For example
 
@@ -65,24 +51,36 @@ Ep1.mp4,1:49,3:08,0,300
 Ep1.mp4,22:29,23:35,-300,0
 ```
 
+If no input folder is specified, it will default to using `input` as the the folder.
+
+If no output folder is specified, it will default to using `output` as the the folder.
+
+If you do not wish to trim the clip from the template file, add the `-s` or `--skip-templates` option.
+
 To check if the timestamps specified is correct, the `-f` or `--viewframe` argument can be added to the program.
 
 This will display the start/end frames as specified in the template
 
-usage: snip.py [-h] [-i I] [-o O] [-f] [-s] templates
-
-
 ## Example Workflow
+Firstly, we procure a set of video clips with a common segment that we wish to excise.
 
-Here, we have a set of clips from Higurashi No Naku Koroni. 
-Each clip has the same opening and ending sequence that we wish to excise.
-In this example, we will be splicing the clips based on the template on Episode 6.
+We manually determine the timestamp of the portion that we wish to excise for the first clip.
+Use `python snip.py -i INPUT_FOLDER -f TEMPLATE.csv` to preview the starting/ending of the segments that will be excised.
 
-Ideally, the starting/ending frame of the segment which we want to excise remain relatively unchange for a period of time, or else the program may be unable to find this frame in the target clip (unless the granularity is set to 0). 
+Once we determined that the template is acceptable, use `python snip.py -i INPUT_FOLDER -o OUTPUT_FOLDER TEMPLATE.csv` to start the excising process.
+
+## Details
+
+- The starting/ending frame of the segment which we want to excise remain relatively unchange for a period of time, or else the program may be unable to find this frame in the target clip (unless the granularity is set to 0). 
 Thus, ideally, our clip should start on a frame that does not rapidly change, ie it does not cut to a different scene.
 
-As we see in the starting sequence below, the scene does not change for a decent period of time. 
-For good performance, the scene should remain unchanged for at least 1 second so that the program can correctly identify the frame.
+- The starting frame that we excise should be unique enough that the program may not excise based on a false positive. 
+Thus, it is not advisable to excise based on a complete black/white frame.
+
+- The program determines the similarity using histogram matching of the HSV channels.
+
+- The program assumes that the duration of the excised clips are constant for all the episodes.
+Meaning it does not search for similarity of the end of the template.
 
 ## Authors
 
@@ -90,5 +88,5 @@ For good performance, the scene should remain unchanged for at least 1 second so
 
 ## License
 
-This project is licensed under the MIT License - see the [LICENSE.md](LICENSE.md) file for details
+This project is licensed under the MIT License 
 
